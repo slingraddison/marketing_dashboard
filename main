@@ -1,0 +1,316 @@
+import React, { useState, useEffect } from 'react';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Calendar, Mail, Users, TrendingUp, RefreshCw } from 'lucide-react';
+
+export default function InstantlyDashboard() {
+  const [apiKey, setApiKey] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [campaigns, setCampaigns] = useState([]);
+  const [selectedCampaign, setSelectedCampaign] = useState(null);
+  const [weeklyData, setWeeklyData] = useState([]);
+  const [sequenceData, setSequenceData] = useState([]);
+  const [error, setError] = useState('');
+
+  const fetchCampaigns = async () => {
+    if (!apiKey) {
+      setError('Please enter your Instantly API key');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      // Try direct API call first
+      const url = `https://api.instantly.ai/api/v1/campaign/list?api_key=${encodeURIComponent(apiKey)}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API request failed: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      
+      if (Array.isArray(data)) {
+        setCampaigns(data);
+        if (data.length > 0) {
+          processAllCampaigns(data);
+        }
+      } else {
+        throw new Error('Unexpected response format from API');
+      }
+    } catch (err) {
+      // Check if it's a CORS error
+      if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
+        setError('CORS Error: The Instantly API blocks direct browser requests. Please use a CORS proxy or backend server to fetch data. See instructions below.');
+      } else {
+        setError('Error: ' + err.message);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const processAllCampaigns = (campaignList) => {
+    // Group data by week
+    const weeklyMap = new Map();
+    
+    campaignList.forEach(campaign => {
+      const stats = campaign.stats || {};
+      const week = getWeekLabel(new Date());
+      
+      if (!weeklyMap.has(week)) {
+        weeklyMap.set(week, {
+          week,
+          emails: 0,
+          replies: 0,
+          contacts: 0,
+          campaigns: 0
+        });
+      }
+      
+      const weekData = weeklyMap.get(week);
+      weekData.emails += stats.sent || 0;
+      weekData.replies += stats.replied || 0;
+      weekData.contacts += stats.leads || 0;
+      weekData.campaigns += 1;
+    });
+
+    const weekly = Array.from(weeklyMap.values()).map(w => ({
+      ...w,
+      replyRate: w.emails > 0 ? ((w.replies / w.emails) * 100).toFixed(2) : 0
+    }));
+
+    setWeeklyData(weekly);
+  };
+
+  const getWeekLabel = (date) => {
+    const week = Math.ceil(date.getDate() / 7);
+    const month = date.toLocaleString('default', { month: 'short' });
+    return `${month} W${week}`;
+  };
+
+  const selectCampaign = (campaign) => {
+    setSelectedCampaign(campaign);
+    
+    // Process sequence data if available
+    if (campaign.sequences) {
+      const seqData = campaign.sequences.map((seq, idx) => ({
+        name: `Email ${idx + 1}`,
+        sent: seq.sent || 0,
+        replies: seq.replied || 0,
+        replyRate: seq.sent > 0 ? ((seq.replied / seq.sent) * 100).toFixed(2) : 0
+      }));
+      setSequenceData(seqData);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold text-white mb-2">Instantly Campaign Dashboard</h1>
+          <p className="text-purple-200">Track your email campaigns and performance metrics</p>
+        </div>
+
+        {/* API Key Input */}
+        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20">
+          <label className="block text-white font-semibold mb-2">Instantly API Key</label>
+          <div className="flex gap-3">
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Enter your API key"
+              className="flex-1 px-4 py-3 rounded-lg bg-white/20 border border-white/30 text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
+            />
+            <button
+              onClick={fetchCampaigns}
+              disabled={isLoading}
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg font-semibold flex items-center gap-2 transition-colors"
+            >
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-5 h-5" />
+                  Fetch Data
+                </>
+              )}
+            </button>
+          </div>
+          {error && (
+            <div className="mt-4 p-4 bg-red-500/20 border border-red-400/30 rounded-lg">
+              <p className="text-red-300 font-semibold mb-2">{error}</p>
+              {error.includes('CORS') && (
+                <div className="text-red-200 text-sm space-y-2 mt-3">
+                  <p className="font-semibold">Workaround Options:</p>
+                  <ol className="list-decimal list-inside space-y-1 ml-2">
+                    <li>Use a CORS proxy like: <code className="bg-black/30 px-2 py-1 rounded">https://corsproxy.io/?</code></li>
+                    <li>Create a simple backend server to proxy the requests</li>
+                    <li>Use Instantly's Zapier integration to push data to a database</li>
+                    <li>Export CSV data from Instantly and upload it here</li>
+                  </ol>
+                  <p className="mt-3 text-xs">Note: Your API key has the correct permissions. This is a browser security limitation.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Summary Cards */}
+        {campaigns.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/20 backdrop-blur-lg rounded-xl p-6 border border-blue-400/30">
+              <div className="flex items-center gap-3 mb-2">
+                <Calendar className="w-8 h-8 text-blue-300" />
+                <h3 className="text-blue-100 font-semibold">Active Campaigns</h3>
+              </div>
+              <p className="text-3xl font-bold text-white">{campaigns.length}</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-green-500/20 to-green-600/20 backdrop-blur-lg rounded-xl p-6 border border-green-400/30">
+              <div className="flex items-center gap-3 mb-2">
+                <Mail className="w-8 h-8 text-green-300" />
+                <h3 className="text-green-100 font-semibold">Total Sent</h3>
+              </div>
+              <p className="text-3xl font-bold text-white">
+                {campaigns.reduce((sum, c) => sum + (c.stats?.sent || 0), 0).toLocaleString()}
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/20 backdrop-blur-lg rounded-xl p-6 border border-purple-400/30">
+              <div className="flex items-center gap-3 mb-2">
+                <TrendingUp className="w-8 h-8 text-purple-300" />
+                <h3 className="text-purple-100 font-semibold">Avg Reply Rate</h3>
+              </div>
+              <p className="text-3xl font-bold text-white">
+                {campaigns.length > 0
+                  ? (campaigns.reduce((sum, c) => {
+                      const sent = c.stats?.sent || 0;
+                      const replied = c.stats?.replied || 0;
+                      return sum + (sent > 0 ? (replied / sent) * 100 : 0);
+                    }, 0) / campaigns.length).toFixed(2)
+                  : 0}%
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/20 backdrop-blur-lg rounded-xl p-6 border border-orange-400/30">
+              <div className="flex items-center gap-3 mb-2">
+                <Users className="w-8 h-8 text-orange-300" />
+                <h3 className="text-orange-100 font-semibold">Total Contacts</h3>
+              </div>
+              <p className="text-3xl font-bold text-white">
+                {campaigns.reduce((sum, c) => sum + (c.stats?.leads || 0), 0).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Campaign List */}
+        {campaigns.length > 0 && (
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20">
+            <h2 className="text-2xl font-bold text-white mb-4">Campaign Performance</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-white/20">
+                    <th className="text-left py-3 px-4 text-purple-200 font-semibold">Campaign</th>
+                    <th className="text-right py-3 px-4 text-purple-200 font-semibold">Emails Sent</th>
+                    <th className="text-right py-3 px-4 text-purple-200 font-semibold">Replies</th>
+                    <th className="text-right py-3 px-4 text-purple-200 font-semibold">Reply Rate</th>
+                    <th className="text-right py-3 px-4 text-purple-200 font-semibold">Contacts</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map((campaign, idx) => {
+                    const sent = campaign.stats?.sent || 0;
+                    const replied = campaign.stats?.replied || 0;
+                    const replyRate = sent > 0 ? ((replied / sent) * 100).toFixed(2) : 0;
+                    
+                    return (
+                      <tr
+                        key={idx}
+                        onClick={() => selectCampaign(campaign)}
+                        className="border-b border-white/10 hover:bg-white/5 cursor-pointer transition-colors"
+                      >
+                        <td className="py-3 px-4 text-white font-medium">{campaign.name}</td>
+                        <td className="py-3 px-4 text-right text-white">{sent.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-white">{replied.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-white">{replyRate}%</td>
+                        <td className="py-3 px-4 text-right text-white">{(campaign.stats?.leads || 0).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Weekly Trends Chart */}
+        {weeklyData.length > 0 && (
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20">
+            <h2 className="text-2xl font-bold text-white mb-4">Weekly Performance</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={weeklyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                <XAxis dataKey="week" stroke="#e9d5ff" />
+                <YAxis stroke="#e9d5ff" />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1e1b4b', border: '1px solid #a78bfa', borderRadius: '8px' }}
+                  labelStyle={{ color: '#e9d5ff' }}
+                />
+                <Legend />
+                <Line type="monotone" dataKey="emails" stroke="#60a5fa" strokeWidth={2} name="Emails Sent" />
+                <Line type="monotone" dataKey="replies" stroke="#34d399" strokeWidth={2} name="Replies" />
+                <Line type="monotone" dataKey="replyRate" stroke="#f59e0b" strokeWidth={2} name="Reply Rate %" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Sequence Performance */}
+        {selectedCampaign && sequenceData.length > 0 && (
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
+            <h2 className="text-2xl font-bold text-white mb-4">
+              Sequence Performance: {selectedCampaign.name}
+            </h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={sequenceData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                <XAxis dataKey="name" stroke="#e9d5ff" />
+                <YAxis stroke="#e9d5ff" />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1e1b4b', border: '1px solid #a78bfa', borderRadius: '8px' }}
+                  labelStyle={{ color: '#e9d5ff' }}
+                />
+                <Legend />
+                <Bar dataKey="sent" fill="#60a5fa" name="Sent" />
+                <Bar dataKey="replies" fill="#34d399" name="Replies" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {campaigns.length === 0 && !isLoading && (
+          <div className="bg-white/10 backdrop-blur-lg rounded-xl p-12 border border-white/20 text-center">
+            <Mail className="w-16 h-16 text-purple-300 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-white mb-2">No Data Yet</h3>
+            <p className="text-purple-200">Enter your Instantly API key and click Fetch Data to get started</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
